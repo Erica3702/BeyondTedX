@@ -5,11 +5,9 @@ import os
 
 # 1. CONFIGURAZIONE
 
-# Imposta il logger per visualizzare informazioni utili nei log di CloudWatch
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Inizializza il client per il servizio AWS Glue.
 try:
     client = boto3.client('glue')
 except Exception as e:
@@ -37,15 +35,14 @@ def lambda_handler(event, context):
         logger.info(f"Job '{GLUE_JOB_NAME}' avviato con successo.")
         logger.info(f"Job Run ID: {run_id}")
         
-        # Restituisce una risposta positiva.
+        # Esito positivo
         return {
             'statusCode': 200,
             'body': json.dumps(f"Job {GLUE_JOB_NAME} avviato. Run ID: {run_id}")
         }
         
     except Exception as e:
-        # Se qualcosa va storto durante l'avvio del job (es. job non trovato, ruolo con permessi mancanti),
-        # logga l'errore in modo dettagliato.
+        # Se qualcosa va storto durante l'avvio del job (es. job non trovato, ruolo con permessi mancanti)
         logger.error(f"## FALLIMENTO ##")
         logger.error(f"Impossibile avviare il job '{GLUE_JOB_NAME}'. Dettagli errore:")
         logger.error(str(e))

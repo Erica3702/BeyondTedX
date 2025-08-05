@@ -1,106 +1,98 @@
 import sys
 import json
 import pyspark
-from pyspark.sql.functions import col, collect_list, array_join, array_intersect, size, array, lit
+from pyspark.sql.functions import col, collect_list, array_intersect, size, array, lit
 
 from awsglue.transforms import *
 from awsglue.utils import getResolvedOptions
 from pyspark.context import SparkContext
 from awsglue.context import GlueContext
 from awsglue.job import Job
-from pyspark.sql.functions import array_contains
-from functools import reduce
+from awsglue.dynamicframe import DynamicFrame
 
-# FROM FILES
-tedx_dataset_path = "s3://tedx-2025-data-mp-30072025/final_list.csv"
+S3_BUCKET_PATH = "s3://tedx-2025-data-mp05082025/"
 
-# READ PARAMETERS
+# Parametri e Inizializzazione del Job
 args = getResolvedOptions(sys.argv, ['JOB_NAME'])
-
-# START JOB CONTEXT AND JOB
 sc = SparkContext()
 glueContext = GlueContext(sc)
 spark = glueContext.spark_session
-
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-# READ INPUT FILES TO CREATE AN INPUT DATASET
+# 1. LETTURA DATASET DI BASE
+
 tedx_dataset = spark.read \
     .option("header", "true") \
     .option("quote", "\"") \
     .option("escape", "\"") \
-    .csv(tedx_dataset_path)
+    .csv(S3_BUCKET_PATH + "final_list.csv")
 
-tedx_dataset.printSchema()
-
-# FILTER ITEMS WITH NULL POSTING KEY
-count_items = tedx_dataset.count()
-count_items_null = tedx_dataset.filter("id is not null").count()
-
-print(f"Number of items from RAW DATA {count_items}")
-print(f"Number of items from RAW DATA with NOT NULL KEY {count_items_null}")
-
-# READ THE DETAILS
-details_dataset_path = "s3://tedx-2025-data-mp-30072025/details.csv"
 details_dataset = spark.read \
     .option("header", "true") \
     .option("quote", "\"") \
     .option("escape", "\"") \
-    .csv(details_dataset_path)
+    .csv(S3_BUCKET_PATH + "details.csv")
 
-details_dataset = details_dataset.select(col("id").alias("id_ref"), col("description"), col("duration"), col("publishedAt"))
+tedx_dataset_main = tedx_dataset.join(details_dataset, tedx_dataset.id == details_dataset.id, "left") \
+    .drop(details_dataset.id)
 
-# READ THE IMAGES
-images_dataset_path = "s3://tedx-2025-data-mp-30072025/images.csv"
-images_dataset = spark.read.option("header", "true").option("quote", "\"").option("escape", "\"").csv(images_dataset_path)
-images_dataset = images_dataset.select(col("id").alias("id_ref"), col("url"))
+# 2. AGGIUNTA TAGS
 
-# BUILD THE MAIN DATASET BY JOINING DETAILS AND IMAGES
-tedx_dataset_main = tedx_dataset.join(details_dataset, tedx_dataset.id == details_dataset.id_ref, "left").drop("id_ref")
-tedx_dataset_main = tedx_dataset_main.join(images_dataset, tedx_dataset_main.id == images_dataset.id_ref, "left").drop("id_ref")
-tedx_dataset_main.printSchema()
-
-# READ TAGS DATASET
-tags_dataset_path = "s3://tedx-2025-data-mp-30072025/tags.csv"
+tags_dataset_path = S3_BUCKET_PATH + "tags.csv"
 tags_dataset = spark.read.option("header", "true").csv(tags_dataset_path)
 
-# CREATE THE AGGREGATE MODEL FOR TAGS
 tags_dataset_agg = tags_dataset.groupBy("id").agg(collect_list("tag").alias("tags"))
 
-# FILTER FOR 'science' TAG
-tags_dataset_agg = tags_dataset_agg.where("array_contains(tags, 'science')")
+tedx_dataset_agg = tedx_dataset_main.join(tags_dataset_agg, tedx_dataset_main.id == tags_dataset_agg.id, "left") \
+    .drop(tags_dataset_agg.id)
 
-# READ WATCH_NEXT
-watch_next_dataset_path = "s3://tedx-2025-data-mp-30072025/related_videos.csv" 
+# 3. AGGIUNTA VIDEO SUGGERITI (WATCH NEXT)
+
+
+watch_next_dataset_path = S3_BUCKET_PATH + "related_videos.csv"
 watch_next_dataset = spark.read.option("header", "true").csv(watch_next_dataset_path)
 watch_next_dataset = watch_next_dataset.dropDuplicates()
 
-# ADD WATCH_NEXT per ID TO AGGREGATE MODEL
-watch_next_dataset_agg = watch_next_dataset.groupBy(col("id").alias("id_watch_next")).agg(collect_list("related_id").alias("WatchNext_id"), collect_list("title").alias("WatchNext_title"))
+watch_next_dataset_agg = watch_next_dataset.groupBy(col("id").alias("id_watch_next")) \
+    .agg(collect_list("related_id").alias("WatchNext_id"), collect_list("title").alias("WatchNext_title"))
 
-# JOIN EVERYTHING TOGETHER TO CREATE THE FINAL AGGREGATE DATASET
-tedx_dataset_agg = tedx_dataset_main.join(tags_dataset_agg, tedx_dataset_main.id == tags_dataset_agg.id, "left") \
-    .drop(tags_dataset_agg.id) \
-    .join(watch_next_dataset_agg, tedx_dataset_main.id == watch_next_dataset_agg.id_watch_next, "left") \
-    .drop(watch_next_dataset_agg.id_watch_next) \
-    .withColumnRenamed("id", "_id")
+tedx_dataset_agg = tedx_dataset_agg.join(watch_next_dataset_agg, tedx_dataset_agg.id == watch_next_dataset_agg.id_watch_next, "left") \
+    .drop("id_watch_next")
 
-tedx_dataset_agg.printSchema()
+# 4. FILTRAGGIO TEMATICO
 
-# FILTERING FOR BeyondTEDx
-filtered_dataset = tedx_dataset_agg.where(size(array_intersect(col("tags"), array(lit("science"), lit("space"), lit("aliens"), lit("asteroid"), lit("astronomy"), lit("Big Bang"), lit("dark matter"), lit("exploration"), lit("evolution"), lit("innovation"), lit("Mars"), lit("Moon"), lit("Mission Blue"), lit("planets"), lit("NASA"), lit("quantum"), lit("rocket science"), lit("Solar System"), lit("Sun"), lit("String Theory"), lit("Universe")))) > 0)
+beyond_tedx_keywords = [
+    "space", "aliens", "asteroid", "astronomy", "Big Bang", "dark matter",
+    "exploration", "evolution", "innovation", "Mars", "Moon", "planets", "NASA",
+    "quantum", "rocket science", "Solar System", "Sun", "String Theory", "Universe"
+]
 
-# PRINT THE FILTERED DATASET SCHEMA 
-filtered_dataset.printSchema()
+# il filtro  richiede almeno 3 tag in comune
+filtered_dataset = tedx_dataset_agg.where(
+    size(array_intersect(col("tags"), array([lit(x) for x in beyond_tedx_keywords]))) > 2
+)
+
+print("Schema finale del dataset filtrato:")
+final_dataset = filtered_dataset.withColumnRenamed("id", "_id")
+final_dataset.printSchema()
+
+
+# 5. SCRITTURA SU MONGODB
 
 write_mongo_options = {
-    "connectionName": "BeyondTEDx",
+    "connectionName": "Mongodbatlas connection",
     "database": "unibg_tedx_2025",
     "collection": "tedx_data",
     "ssl": "true",
-    "ssl.domain_match": "false"}
-from awsglue.dynamicframe import DynamicFrame
-tedx_dataset_dynamic_frame = DynamicFrame.fromDF(filtered_dataset, glueContext, "nested")
+    "ssl.domain_match": "false"
+}
 
-glueContext.write_dynamic_frame.from_options(tedx_dataset_dynamic_frame, connection_type="mongodb", connection_options=write_mongo_options)
+tedx_dynamic_frame = DynamicFrame.fromDF(final_dataset, glueContext, "tedx_dynamic_frame")
+glueContext.write_dynamic_frame.from_options(
+    frame=tedx_dynamic_frame,
+    connection_type="mongodb",
+    connection_options=write_mongo_options
+)
+
+job.commit()

@@ -19,7 +19,7 @@ spark = glueContext.spark_session
 job = Job(glueContext)
 job.init(args['JOB_NAME'], args)
 
-S3_BUCKET_PATH = "s3://tedx-2025-data-mp-30072025/"
+S3_BUCKET_PATH = "s3://tedx-2025-data-mp05082025/"
 
 
 # 2. LETTURA E PREPARAZIONE DEI DATI
@@ -51,7 +51,6 @@ all_paths_dfs = []
 for tag in main_tags_for_paths:
     print(f"--> Elaborazione percorsi per il tag: '{tag}'")
     
-    # Filtra i talk che contengono il tag corrente
     talks_for_path = base_talks_df.filter(array_contains(col("tags"), tag))
     
     # Crea un percorso solo se ci sono almeno 3 talk sull'argomento
@@ -88,7 +87,7 @@ if all_paths_dfs:
 
 # 4. SCRITTURA DEI PERCORSI SU MONGODB
     write_mongo_options = {
-        "connectionName": "BeyondTEDx",
+        "connectionName": "Mongodbatlas connection",
         "database": "unibg_tedx_2025",
         "collection": "learning_paths",  # <-- NOME DELLA NUOVA COLLEZIONE
         "ssl": "true",
