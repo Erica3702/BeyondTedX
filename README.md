@@ -1,4 +1,4 @@
-# BeyondTedX 
+# BeyondTedX 🧑🏻‍🚀🪐🚀🔭
 ## Progetto del corso di Tecnologie Cloud e Mobile dell'Università degli Studi di Bergamo 2024/2025
 <img width="2593" height="1455" alt="image" src="https://github.com/user-attachments/assets/34c584a8-3077-4db8-9403-ea83b13dc960" />
 
