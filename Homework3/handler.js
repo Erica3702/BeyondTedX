@@ -65,7 +65,6 @@ module.exports.get_watch_next_by_id = async (event, context) => {
                 _id: suggested_talk._id,
                 title: suggested_talk.title,
                 url: suggested_talk.url,
-                suggestion_reason: common_phrases
             };
         });
 
